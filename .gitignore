@@ -24,6 +24,10 @@ summary.md
 # GoReleaser build artifacts
 dist/
 
+test/output.txt
+test/random.txt
+test/terraform.tfstate
+
 # IDE
 .idea/
 .vscode/

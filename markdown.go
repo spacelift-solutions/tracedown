@@ -229,24 +229,29 @@ func writeTOCRow(f *os.File, traceNum int, ti *traceInfo) {
 		status = "⚠️ ERROR"
 	}
 
-	// Create anchor link (markdown anchors are lowercase with hyphens)
-	anchor := fmt.Sprintf("trace-%d-%s", traceNum, ti.traceID)
+	// Create anchor link (markdown anchors are lowercase, strip special chars, replace spaces with hyphens)
+	// Header is: "## Trace 1: `abc123`" which becomes anchor: "trace-1-abc123"
+	anchor := fmt.Sprintf("trace-%d-%s", traceNum, strings.ToLower(ti.traceID))
 
 	fmt.Fprintf(f, "| [#%d](#%s) | %s | %v | %d | %s | %s |\n",
 		traceNum, anchor, serviceName, duration, len(ti.spans), rootSpan, status)
 }
 
 type spanTreeNode struct {
-	spanInfo spanInfo
-	children []*spanTreeNode
-	depth    int
+	spanInfo  spanInfo
+	children  []*spanTreeNode
+	depth     int
+	spanIndex int
 }
 
 func buildSpanTree(ti *traceInfo) *spanTreeNode {
 	// Create a map of span ID to spanInfo for quick lookup
 	spanMap := make(map[string]spanInfo)
-	for _, si := range ti.spans {
-		spanMap[si.span.SpanID().String()] = si
+	spanIndexMap := make(map[string]int)
+	for i, si := range ti.spans {
+		spanID := si.span.SpanID().String()
+		spanMap[spanID] = si
+		spanIndexMap[spanID] = i + 1 // 1-indexed for display
 	}
 
 	// Find root span (no parent)
@@ -265,27 +270,29 @@ func buildSpanTree(ti *traceInfo) *spanTreeNode {
 
 	// Build tree recursively
 	root := &spanTreeNode{
-		spanInfo: rootSpan,
-		children: []*spanTreeNode{},
-		depth:    0,
+		spanInfo:  rootSpan,
+		children:  []*spanTreeNode{},
+		depth:     0,
+		spanIndex: spanIndexMap[rootSpan.span.SpanID().String()],
 	}
 
-	buildChildren(root, spanMap)
+	buildChildren(root, spanMap, spanIndexMap)
 	return root
 }
 
-func buildChildren(node *spanTreeNode, spanMap map[string]spanInfo) {
+func buildChildren(node *spanTreeNode, spanMap map[string]spanInfo, spanIndexMap map[string]int) {
 	parentID := node.spanInfo.span.SpanID().String()
 
 	for _, si := range spanMap {
 		if si.span.ParentSpanID().String() == parentID {
 			child := &spanTreeNode{
-				spanInfo: si,
-				children: []*spanTreeNode{},
-				depth:    node.depth + 1,
+				spanInfo:  si,
+				children:  []*spanTreeNode{},
+				depth:     node.depth + 1,
+				spanIndex: spanIndexMap[si.span.SpanID().String()],
 			}
 			node.children = append(node.children, child)
-			buildChildren(child, spanMap)
+			buildChildren(child, spanMap, spanIndexMap)
 		}
 	}
 
@@ -332,13 +339,16 @@ func writeSpanTree(f *os.File, node *spanTreeNode, traceDuration time.Duration, 
 	}
 
 	// Calculate padding to align duration and bars
-	nameMaxLen := 50
+	nameMaxLen := 45 // Reduced to account for span number
 	name := span.Name()
 	if len(name) > nameMaxLen {
 		name = name[:nameMaxLen-3] + "..."
 	}
 
-	fmt.Fprintf(f, "%s%s %-50s %s %s%s\n", prefix, connector, name, durationStr, bar, statusIndicator)
+	// Add span number prefix
+	nameWithNumber := fmt.Sprintf("[#%d] %s", node.spanIndex, name)
+
+	fmt.Fprintf(f, "%s%s %-50s %s %s%s\n", prefix, connector, nameWithNumber, durationStr, bar, statusIndicator)
 
 	// Write children
 	for i, child := range node.children {
@@ -367,7 +377,7 @@ func formatDuration(d time.Duration) string {
 }
 
 func writeTrace(f *os.File, index int, ti *traceInfo) {
-	fmt.Fprintf(f, "## Trace %d: `%s`\n\n", index, ti.traceID)
+	fmt.Fprintf(f, "## Trace %d: %s\n\n", index, ti.traceID)
 
 	// Sort spans by start time for processing
 	sort.Slice(ti.spans, func(i, j int) bool {
@@ -417,20 +427,26 @@ func writeTrace(f *os.File, index int, ti *traceInfo) {
 	for i, si := range ti.spans {
 		span := si.span
 		spanDuration := time.Duration(span.EndTimestamp() - span.StartTimestamp())
-		status := span.Status().Code().String()
+		statusStr := span.Status().Code().String()
+
+		// Add emoji for error status
+		if span.Status().Code() == ptrace.StatusCodeError {
+			statusStr = "⚠️ " + statusStr
+		}
+
 		kind := span.Kind().String()
 
 		// Build collapsible details inline
 		detailsHTML := buildInlineSpanDetails(i+1, si)
 
-		fmt.Fprintf(f, "| %d | %s | %v | %s | %s | %s |\n", i+1, span.Name(), spanDuration, status, kind, detailsHTML)
+		fmt.Fprintf(f, "| %d | %s | %v | %s | %s | %s |\n", i+1, span.Name(), spanDuration, statusStr, kind, detailsHTML)
 	}
 
 	fmt.Fprintf(f, "\n---\n\n")
 }
 
 func writeTraceSummary(f *os.File, index int, ti *traceInfo, config *Config) {
-	fmt.Fprintf(f, "## Trace %d: `%s`\n\n", index, ti.traceID)
+	fmt.Fprintf(f, "## Trace %d: %s\n\n", index, ti.traceID)
 
 	// Sort spans by start time for processing
 	sort.Slice(ti.spans, func(i, j int) bool {
@@ -492,13 +508,19 @@ func writeTraceSummary(f *os.File, index int, ti *traceInfo, config *Config) {
 		si := ti.spans[i]
 		span := si.span
 		spanDuration := time.Duration(span.EndTimestamp() - span.StartTimestamp())
-		spanStatus := span.Status().Code().String()
+		statusStr := span.Status().Code().String()
+
+		// Add emoji for error status
+		if span.Status().Code() == ptrace.StatusCodeError {
+			statusStr = "⚠️ " + statusStr
+		}
+
 		kind := span.Kind().String()
 
 		// Build collapsible details inline
 		detailsHTML := buildInlineSpanDetails(i+1, si)
 
-		fmt.Fprintf(f, "| %d | %s | %v | %s | %s | %s |\n", i+1, span.Name(), spanDuration, spanStatus, kind, detailsHTML)
+		fmt.Fprintf(f, "| %d | %s | %v | %s | %s | %s |\n", i+1, span.Name(), spanDuration, statusStr, kind, detailsHTML)
 	}
 
 	if maxSpans < totalSpans {
@@ -510,21 +532,10 @@ func writeTraceSummary(f *os.File, index int, ti *traceInfo, config *Config) {
 
 func buildInlineSpanDetails(index int, si spanInfo) string {
 	span := si.span
-	var builder strings.Builder
+	var parts []string
 
-	builder.WriteString("<details><summary>View</summary><br><br>")
-
-	// Basic properties
-	builder.WriteString(fmt.Sprintf("<b>Span ID:</b> <code>%s</code><br>", span.SpanID().String()))
-	builder.WriteString(fmt.Sprintf("<b>Parent ID:</b> <code>%s</code><br>", span.ParentSpanID().String()))
-
-	if span.Status().Message() != "" {
-		builder.WriteString(fmt.Sprintf("<b>Status Message:</b> %s<br>", span.Status().Message()))
-	}
-
-	// Attributes
+	// Show all attributes
 	if span.Attributes().Len() > 0 {
-		builder.WriteString("<br><b>Attributes:</b><br>")
 		keys := make([]string, 0, span.Attributes().Len())
 		span.Attributes().Range(func(k string, v pcommon.Value) bool {
 			keys = append(keys, k)
@@ -534,31 +545,26 @@ func buildInlineSpanDetails(index int, si spanInfo) string {
 
 		for _, key := range keys {
 			val, _ := span.Attributes().Get(key)
-			builder.WriteString(fmt.Sprintf("• <code>%s</code>: %s<br>", key, formatValue(val)))
+			valStr := formatValue(val)
+			parts = append(parts, fmt.Sprintf("• `%s`: %s", key, valStr))
 		}
 	}
 
-	// Events
+	// Show events count if any
 	if span.Events().Len() > 0 {
-		builder.WriteString("<br><b>Events:</b><br>")
-		for i := 0; i < span.Events().Len(); i++ {
-			event := span.Events().At(i)
-			eventTime := time.Unix(0, int64(event.Timestamp()))
-			builder.WriteString(fmt.Sprintf("• <code>%s</code> - %s<br>", eventTime.Format("15:04:05.000"), event.Name()))
-		}
+		parts = append(parts, fmt.Sprintf("• _Events: %d_", span.Events().Len()))
 	}
 
-	// Links
+	// Show links count if any
 	if span.Links().Len() > 0 {
-		builder.WriteString("<br><b>Links:</b><br>")
-		for i := 0; i < span.Links().Len(); i++ {
-			link := span.Links().At(i)
-			builder.WriteString(fmt.Sprintf("• Trace: <code>%s</code><br>", link.TraceID().String()))
-		}
+		parts = append(parts, fmt.Sprintf("• _Links: %d_", span.Links().Len()))
 	}
 
-	builder.WriteString("</details>")
-	return builder.String()
+	if len(parts) == 0 {
+		return "_no additional data_"
+	}
+
+	return strings.Join(parts, "<br>")
 }
 
 func writeSpanDetailed(f *os.File, index int, si spanInfo) {
