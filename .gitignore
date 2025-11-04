@@ -1,0 +1,32 @@
+# Binaries
+tracedown
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output coverage
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Generated trace reports
+traces.md
+tracedown.log
+summary.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store

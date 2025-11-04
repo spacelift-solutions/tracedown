@@ -1,0 +1,131 @@
+# GoReleaser configuration for tracedown
+# https://goreleaser.com
+
+version: 2
+
+before:
+  hooks:
+    # Run tests before building
+    - go test ./...
+    - go mod tidy
+
+builds:
+  - id: tracedown
+    binary: tracedown
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    # Exclude combinations that don't make sense
+    ignore:
+      - goos: windows
+        goarch: arm
+      - goos: darwin
+        goarch: arm
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+    flags:
+      - -trimpath
+
+archives:
+  - id: tracedown
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: 'New Features'
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Performance Improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: 'Documentation'
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: 'Other Changes'
+      order: 999
+
+release:
+  github:
+    owner: spacelift-solutions
+    name: tracedown
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## tracedown {{ .Tag }}
+
+    A lightweight OpenTelemetry trace collector that captures OTLP traces and generates markdown reports.
+
+    ### Installation
+
+    Download the appropriate binary for your platform below, extract it, and place it in your PATH.
+
+    **macOS/Linux:**
+    ```bash
+    # Example for macOS (x86_64)
+    curl -L https://github.com/spacelift-solutions/tracedown/releases/download/{{ .Tag }}/tracedown_{{ .Version }}_darwin_x86_64.tar.gz | tar xz
+    sudo mv tracedown /usr/local/bin/
+    ```
+
+    **Windows:**
+    Download the `.zip` file for your architecture, extract it, and add to your PATH.
+
+    **Go install:**
+    ```bash
+    go install github.com/spacelift-solutions/tracedown@{{ .Tag }}
+    ```
+
+  footer: |
+    ### Checksums
+
+    All binaries are checksummed for verification:
+    ```bash
+    sha256sum -c checksums.txt
+    ```
+
+    ---
+
+    **Full Changelog**: https://github.com/spacelift-solutions/tracedown/compare/{{ .PreviousTag }}...{{ .Tag }}
