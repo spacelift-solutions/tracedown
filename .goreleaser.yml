@@ -7,7 +7,6 @@ before:
   hooks:
     # Run tests before building
     - go test ./...
-    - go mod tidy
 
 builds:
   - id: tracedown

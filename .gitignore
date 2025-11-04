@@ -21,6 +21,9 @@ traces.md
 tracedown.log
 summary.md
 
+# GoReleaser build artifacts
+dist/
+
 # IDE
 .idea/
 .vscode/
